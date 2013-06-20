@@ -12,10 +12,14 @@ recommendations.
 
 Usage:
 
-    $ ./docpy.py filename
+    $ ./docpy.py filename/package
 
-Output:
-    A MarkDown of *filename*
+Output:  
+    A MarkDown documentation of your code.
+    If you provide a file as input, the output will be directed to the console.
+    If you provide a package name, all modules and packages within this package 
+    will be documented, and a MD file will be created for each package under the 
+    a folder named '*package*_docs'.
     
 Notes:
 
@@ -291,18 +295,28 @@ class DocModule:
         ref = '<a id="%s"></a>' % module_name.replace('\\', '') if add_ref else ''
         stack.push('## %s%s' % (ref, module_name))
         
-        doc_ = find_docstring()
+        try:
+            doc_ = find_docstring()
+        except StopIteration:
+            self.result = []
+            return
         stack.push(doc_)
         
         # Loop classes
+        documented = False
         while True:
             try:
                 callable_ = find_class_or_function()
-                stack.push(callable_)
+                if callable_:
+                    stack.push(callable_)
+                    documented = True
             except (BlockExit, StopIteration):
                 break
         
-        self.result = stack
+        if not (doc_ or documented) and IGNORE_UNDOCUMENTED:
+            self.result = []
+        else:
+            self.result = stack
 
     def __repr__(self):
         return '\n'.join(self.result)
@@ -315,48 +329,74 @@ def get_file_list(path):
     if len(parts) == 1:
         parts.prepend('')
     prefix, root_package = parts
+    
     for root, dirnames, filenames in os.walk(path):
         files = []
         for filename in fnmatch.filter(filenames, '*.py'):
             files.append(filename)
             matches.append((root.lstrip(prefix), filename))
         if files:
-            tree[root.lstrip(prefix).lstrip('/')] = {'files': files, 'dirs': dirnames}
+            tree[root.replace(prefix, '', 1).lstrip('/')] = {'files': files, 'dirs': dirnames}
+    
     return tree, prefix, root_package
     
 def walk_tree(tree, path, k, target_dir):
     v = tree[k]
-    files = sorted(v['files'])
-    # Open target file
-    f = open(os.path.join(target_dir, '%s.md' % k), 'w')
-    # Write pacage name
-    f.write('# %s\n' % k)
-    # Construct list of internal links
-    links = ['* [%s](#%s)' % (m, m) for m in files if m != '__init__.py']
-    links.insert(0, '## Modules')
-    links_str = '\n'.join(links)+'\n'
-    if '__init__.py' not in files:
-        f.write(links_str)
-    for m in files:
+    links = []
+    doc_string = ''
+    documented = False
+    f = tempfile.TemporaryFile(mode='w+t')
+    
+    for m in sorted(v['files']):
         sys.stdout.write('Documenting %s...' % os.path.join(path, k, m))
         d = DocModule(os.path.join(path, k, m), add_ref=True)
         doc_ = repr(d)
-        if m == '__init__.py':
-            doc_ = '\n'.join([line for i, line in enumerate(doc_.splitlines()) if i])
-            doc_ = '%s\n%s' % (doc_, links_str)
-        f.write('%s\n' % doc_)
+        if doc_:
+            if m == '__init__.py':
+                doc_string = '\n'.join([line for i, line in enumerate(doc_.splitlines()) if i]) + '\n'
+            else:
+                links.append('* [%s](#%s)' % (m, m))
+                f.write('%s\n' % doc_)
+            documented = True
         print 'done'
-        #print '%s: %s' % (k, m)
-    f.close()
+    
+    packages = []
     for d in sorted(v['dirs']):
         sub_dir = '/'.join((k, d))
         if sub_dir in tree:
-            walk_tree(tree, path, sub_dir, target_dir)
+            result = walk_tree(tree, path, sub_dir, target_dir)
+            if result:
+                packages.append('* [%s](%s.html)' % (d, result.replace('.md', '')))
+         
+    if documented:
+        # Transfer from temp file
+        f.seek(0)
+        trg_file = '%s.md' % k.replace('/', '_')
+        fw = open(os.path.join(target_dir, trg_file) , 'w')
+        # Write package name
+        fw.write('# %s\n' % k)
+        if doc_string:
+            fw.write(doc_string)
+        # Write packages
+        if packages:
+            fw.write('## Packages\n')
+            fw.write('\n'.join(packages)+'\n')
+        # Write links
+        if links:
+            fw.write('## Modules\n')
+            fw.write('\n'.join(links)+'\n')
+        # Write temp file
+        fw.write(f.read())
+        fw.close()
+    f.close()
+       
+    return trg_file
                     
 if __name__ == '__main__':
     import os
     import sys
     import fnmatch
+    import tempfile
     
     try:
         path = sys.argv[1]
@@ -368,6 +408,7 @@ if __name__ == '__main__':
         d = DocModule(path)
         print d
     else:
+        path = path.rstrip('/')
         root_package = path.strip('.').strip('/').rsplit('/', 1)[-1]
         doc_dir = '%s_docs' % root_package
         if not os.path.exists(doc_dir):

@@ -11,10 +11,14 @@ recommendations.
 
 Usage:
 
-    $ ./docpy.py filename
+    $ ./docpy.py filename/package
 
-Output:
-    A MarkDown of *filename*
+Output:  
+    A MarkDown documentation of your code.
+    If you provide a file as input, the output will be directed to the console.
+    If you provide a package name, all modules and packages within this package 
+    will be documented, and a MD file will be created for each package under the 
+    a folder named '*package*\_docs'.
     
 Notes:
 
@@ -44,5 +48,5 @@ Usage:
     d = DocModule('mymodule.py')
     print d
 
-##### docpy.DocModule.**\_\_init\_\_**(_filename_)
+##### docpy.DocModule.**\_\_init\_\_**(_filename, add\_ref=False_)
 Pass `filename` to document
