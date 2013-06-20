@@ -48,7 +48,7 @@ from token import STRING, NAME, OP, INDENT, DEDENT
 import re
 
 merge_newlines_regex = re.compile(r'[\n|\r\n|\n\r]{2,}')
-leading_space_regex = re.compile(r'\s*')
+leading_space_regex = re.compile(r'[\t ]*')#(r'\s*')
 unquote_code_regex = re.compile(r"`[^`]*\`")
 
 IGNORE_UNDOCUMENTED = True
@@ -109,7 +109,11 @@ class G:
             self.__class__._rollback = False
             return self.__class__.last_item
             
-        item = self.__class__.g.next()[:2]
+        try:
+            item = self.__class__.g.next()[:2]
+        except tokenize.TokenError:
+            print "ERROR tokenizing"
+            raise StopIteration
         self.__class__.last_item = item
         return item
         
@@ -130,7 +134,7 @@ def find_docstring():
         elif tok_type == INDENT:
             indents += 1
         elif tok_type == STRING and (token.startswith("'''") or token.startswith('"""')):
-            doc_ = token.strip("'''").strip('"""').strip('\n').replace('_', '\_')
+            doc_ = token.strip("'''").strip('"""').strip('\r\n').replace('_', '\_')
             n = len(leading_space_regex.match(doc_).group())
             doc_ = '\n'.join([line[n:] for line in doc_.splitlines()])
             doc_ = unquote_code_regex.sub(lambda x:x.group(0).replace('\_','_'), doc_)
@@ -194,7 +198,6 @@ def get_all_list():
         elif tok_type == STRING:
             stack.push(token.strip("'").strip('"'))
         
-    
 def doc_function(is_method=False):
     stack = Stack()
     name = G().next()[1]
@@ -230,7 +233,6 @@ def doc_function(is_method=False):
         
     return '\n'.join(result)
 
-        
 def doc_class():
     global current_class, has_classes_title
     
@@ -259,13 +261,14 @@ def doc_class():
     # Finishes
     current_class = ''
     if (all_list and name.replace('\_', '_') not in all_list) \
-        or (IGNORE_UNDOCUMENTED and not doc_):
+            or (IGNORE_UNDOCUMENTED and not doc_):
         result = []
     else:
         has_classes_title = True
         result = stack
-        
+    
     return '\n'.join(result)
+        
         
 class DocModule:
     """
@@ -388,6 +391,8 @@ def walk_tree(tree, path, k, target_dir):
         # Write temp file
         fw.write(f.read())
         fw.close()
+    else:
+        trg_file = None
     f.close()
        
     return trg_file
