@@ -42,7 +42,6 @@ This documentation was generated using... *self!*
 import tokenize
 from token import STRING, NAME, OP, INDENT, DEDENT
 import re
-import sys
 
 merge_newlines_regex = re.compile(r'[\n|\r\n|\n\r]{2,}')
 leading_space_regex = re.compile(r'\s*')
@@ -272,12 +271,13 @@ class DocModule:
         d = DocModule('mymodule.py')
         print d
     """
-    def __init__(self, filename):
+    def __init__(self, filename, add_ref=False):
         """Pass `filename` to document"""
         global current_module, has_classes_title, all_list
         try:
             f = open(filename)
         except IOError:
+            self.result = []
             return
         module_name = filename.rsplit('/', 1)[-1].replace('_', '\_')
         
@@ -288,7 +288,8 @@ class DocModule:
         g = tokenize.generate_tokens(f.readline)
         G(g)
         stack = Stack()
-        stack.push('## %s' % module_name)
+        ref = '<a id="%s"></a>' % module_name.replace('\\', '') if add_ref else ''
+        stack.push('## %s%s' % (ref, module_name))
         
         doc_ = find_docstring()
         stack.push(doc_)
@@ -306,14 +307,72 @@ class DocModule:
     def __repr__(self):
         return '\n'.join(self.result)
         
-        
+
+def get_file_list(path):
+    matches = []
+    parts = path.rstrip('/').rsplit('/', 1)
+    tree = {}
+    if len(parts) == 1:
+        parts.prepend('')
+    prefix, root_package = parts
+    for root, dirnames, filenames in os.walk(path):
+        files = []
+        for filename in fnmatch.filter(filenames, '*.py'):
+            files.append(filename)
+            matches.append((root.lstrip(prefix), filename))
+        if files:
+            tree[root.lstrip(prefix).lstrip('/')] = {'files': files, 'dirs': dirnames}
+    return tree, prefix, root_package
+    
+def walk_tree(tree, path, k, target_dir):
+    v = tree[k]
+    files = sorted(v['files'])
+    # Open target file
+    f = open(os.path.join(target_dir, '%s.md' % k), 'w')
+    # Write pacage name
+    f.write('# %s\n' % k)
+    # Construct list of internal links
+    links = ['* [%s](#%s)' % (m, m) for m in files if m != '__init__.py']
+    links.insert(0, '## Modules')
+    links_str = '\n'.join(links)+'\n'
+    if '__init__.py' not in files:
+        f.write(links_str)
+    for m in files:
+        sys.stdout.write('Documenting %s...' % os.path.join(path, k, m))
+        d = DocModule(os.path.join(path, k, m), add_ref=True)
+        doc_ = repr(d)
+        if m == '__init__.py':
+            doc_ = '\n'.join([line for i, line in enumerate(doc_.splitlines()) if i])
+            doc_ = '%s\n%s' % (doc_, links_str)
+        f.write('%s\n' % doc_)
+        print 'done'
+        #print '%s: %s' % (k, m)
+    f.close()
+    for d in sorted(v['dirs']):
+        sub_dir = '/'.join((k, d))
+        if sub_dir in tree:
+            walk_tree(tree, path, sub_dir, target_dir)
+                    
 if __name__ == '__main__':
+    import os
+    import sys
+    import fnmatch
+    
     try:
-        module = sys.argv[1]
+        path = sys.argv[1]
     except IndexError:
         print "Please provide a module name"
         exit(1)
-
-    d = DocModule(module)
-    print d
+        
+    if path.endswith('.py'):
+        d = DocModule(path)
+        print d
+    else:
+        root_package = path.strip('.').strip('/').rsplit('/', 1)[-1]
+        doc_dir = '%s_docs' % root_package
+        if not os.path.exists(doc_dir):
+            os.makedirs(doc_dir)
+        
+        tree, path, root = get_file_list(path)
+        walk_tree(tree, path, root, doc_dir)
     
