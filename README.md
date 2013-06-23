@@ -34,7 +34,7 @@ Notes:
 (eg `_my_function()`) will be ignored, except for `__init__`.  
 * **Undocumented objects**: Functions/methods/classes without a **docstring**   
 will be ignored (nothing to document, right?).  
-You can change this behaviour by spceifying `-m` in the command line.  
+You can change this behaviour by spceifying `-a` in the command line.  
 * **Scope**: **docpy** will document *every* object (except for those ignored   
 as mentioned above) as long as `__all__` is not defined. If `__all__` is defined,   
 only objects on that list will be documented.  
