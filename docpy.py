@@ -1,25 +1,33 @@
 #! /usr/bin/python
 """
 A lightweight simple automatic documentor for Python modules.
-The module is not imported. Instead, it is opened for read like regular text file, 
-so dependencies are not an issue.
-This script will go through the classes, methods and functions
-of the module, parse their argument structure and docstrings,
-and construct a MarkDown output for documentation purposes.
 
+**No special syntax or characters are required.**
 All you have to do is make sure your code is documented according to PEP-8 
 recommendations.
 
+**No imports are performed**
+Your files will be opened for read like regular text file, so dependencies are 
+not an issue.
+
+**docpy** will go through the classes, methods and functions of the module,
+parse their argument structure and docstrings, and construct a Markdown output.
+Finally, the Markdown will be converted to HTML to produce a styled document.
+
 Usage:
 
-    $ ./docpy.py filename/package
+    $ ./docpy.py [-m] [-a] filename/package
 
 Output:  
-    A MarkDown documentation of your code.
+    An HTML documentation of your code.
     If you provide a file as input, the output will be directed to the console.
     If you provide a package name, all modules and packages within this package 
-    will be documented, and a MD file will be created for each package under the 
+    will be documented, and an HTML file will be created for each package under the 
     a folder named '*package*_docs'.
+    
+Optional arguments:
+    `-m` - will force a Markdown output. By default, output is converted to HTML.
+    `-a` - will force documenting undocumented objects (see notes below).
     
 Notes:
 
@@ -27,8 +35,8 @@ Notes:
 (eg `_my_function()`) will be ignored, except for `__init__`.
 * **Undocumented objects**: Functions/methods/classes without a **docstring** 
 will be ignored (nothing to document, right?).
-You can change this behaviour by setting the `IGNORE_UNDOCUMENTED` flag to **False**.
-* **Scope**: **docpy.py** will document *every* object (except for those ignored 
+You can change this behaviour by spceifying `-m` in the command line.
+* **Scope**: **docpy** will document *every* object (except for those ignored 
 as mentioned above) as long as `__all__` is not defined. If `__all__` is defined, 
 only objects on that list will be documented.
 
@@ -46,6 +54,23 @@ This documentation was generated using... *self!*
 import tokenize
 from token import STRING, NAME, OP, INDENT, DEDENT
 import re
+import cgi
+try:
+    import markdown
+except ImportError:
+    markdown = None
+
+HTML_WRAPPER = """\
+<!DOCTYPE html>
+<head>
+<meta charset=utf-8>
+<title>%(package)s Documentation</title>
+<link rel="stylesheet" href="default.css" type="text/css">
+</head>
+<body>
+%(content)s
+</body>
+</html>"""
 
 merge_newlines_regex = re.compile(r'[\n|\r\n|\n\r]{2,}')
 leading_space_regex = re.compile(r'[\t ]*')#(r'\s*')
@@ -138,6 +163,8 @@ def find_docstring():
             n = len(leading_space_regex.match(doc_).group())
             doc_ = '\n'.join([line[n:] for line in doc_.splitlines()])
             doc_ = unquote_code_regex.sub(lambda x:x.group(0).replace('\_','_'), doc_)
+            doc_ = doc_.replace('\n', '  \n')
+            doc_ = cgi.escape(doc_)
             return doc_
     
 def find_class_or_function(types=('class', 'def'), **kwargs):
@@ -323,7 +350,7 @@ class DocModule:
 
     def __repr__(self):
         return '\n'.join(self.result)
-        
+
 
 def get_file_list(path):
     matches = []
@@ -343,7 +370,7 @@ def get_file_list(path):
     
     return tree, prefix, root_package
     
-def walk_tree(tree, path, k, target_dir):
+def walk_tree(tree, path, k, target_dir, ext='html'):
     v = tree[k]
     links = []
     doc_string = ''
@@ -367,29 +394,42 @@ def walk_tree(tree, path, k, target_dir):
     for d in sorted(v['dirs']):
         sub_dir = '/'.join((k, d))
         if sub_dir in tree:
-            result = walk_tree(tree, path, sub_dir, target_dir)
+            result = walk_tree(tree, path, sub_dir, target_dir, ext)
             if result:
-                packages.append('* [%s](%s.html)' % (d, result.replace('.md', '')))
+                packages.append('* [%s](%s.html)' % (d, result.rsplit('.', 1)[0]))
          
     if documented:
         # Transfer from temp file
         f.seek(0)
-        trg_file = '%s.md' % k.replace('/', '_')
-        fw = open(os.path.join(target_dir, trg_file) , 'w')
+        trg_file = '%s.%s' % (k.replace('/', '_'), ext)
+        
+        stack = Stack()
         # Write package name
-        fw.write('# %s\n' % k)
+        stack.push('# %s\n' % k)
         if doc_string:
-            fw.write(doc_string)
+            stack.push(doc_string)
         # Write packages
         if packages:
-            fw.write('## Packages\n')
-            fw.write('\n'.join(packages)+'\n')
+            stack.push('## Packages\n')
+            stack.push('\n'.join(packages)+'\n')
         # Write links
         if links:
-            fw.write('## Modules\n')
-            fw.write('\n'.join(links)+'\n')
+            stack.push('## Modules\n')
+            stack.push('\n'.join(links)+'\n')
         # Write temp file
-        fw.write(f.read())
+        output = '\n'.join(stack)
+        output += f.read()
+        if markdown and ext == 'html':
+            try:
+                output = unicode(output)
+            except UnicodeDecodeError as e:
+                print "Error in converting to Unicode"
+                output = u"There was an error trying to convert this package to Unicode.  \n" \
+                         "Error: %s" % e
+            output = markdown.markdown(output)
+            output = HTML_WRAPPER % {'package': k, 'content': output}
+        fw = open(os.path.join(target_dir, trg_file) , 'w')
+        fw.write(output)
         fw.close()
     else:
         trg_file = None
@@ -402,15 +442,37 @@ if __name__ == '__main__':
     import sys
     import fnmatch
     import tempfile
+    import argparse
     
-    try:
-        path = sys.argv[1]
-    except IndexError:
-        print "Please provide a module name"
-        exit(1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('filename', help="Name of module or package to document")
+    parser.add_argument('-m', '--md', help="Output the file as MarkDown (otherwise: HTML)", action='store_true')
+    parser.add_argument('-a', '--all', help="Document all objects, including those without docstrings", action='store_true')
+    args = parser.parse_args()
+    
+    path = args.filename
+    IGNORE_UNDOCUMENTED = not args.all
+    ext = 'md' if args.md else 'html'
+    if ext == 'html' and not markdown:
+        print "========================\n"\
+              "WARNING: The `python-markdown` package wasn't found. "\
+              "It is required to convert the output to HTML.\n"\
+              "Install it with the following command:\n    $ pip install markdown.\n"\
+              "\nThe documentation will be generated as Markdown.\n"
+        while True:
+            ans = raw_input("Continue? (Y/n): ")
+            ans = ans or 'y'
+            if ans == 'y':
+                break
+            elif ans == 'n':
+                exit(1)
+        ext = 'md'
         
     if path.endswith('.py'):
         d = DocModule(path)
+        if ext == 'html':
+            d = markdown.markdown(unicode(repr(d)))
+            d = HTML_WRAPPER % {'package': path, 'content': d}
         print d
     else:
         path = path.rstrip('/')
@@ -420,5 +482,5 @@ if __name__ == '__main__':
             os.makedirs(doc_dir)
         
         tree, path, root = get_file_list(path)
-        walk_tree(tree, path, root, doc_dir)
+        walk_tree(tree, path, root, doc_dir, ext)
     
